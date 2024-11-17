@@ -14,7 +14,7 @@
 feature2count <- function(featureCount) {
   rawCount <- featureCount %>% select(-c(Geneid:Length)) %>% as.matrix()
   rownames(rawCount) <- featureCount$Geneid
-  return(data)
+  return(rawCount)
 }
 
 
@@ -32,8 +32,9 @@ feature2count <- function(featureCount) {
 #' top_features <- top_variable(data, n = 1000)
 top_variable <- function(data, n = 1000) {
   rV <- matrixStats::rowVars(as.matrix(data))
-  rV_top <- which.max(rV >= n)
-  return(data[rV_top,])
+  names(rV) <- rownames(data)
+  rV_top <- sort(rV,decreasing = T)[1:n]
+  return(data[names(rV_top),])
 }
 
 
@@ -222,20 +223,37 @@ plotV <- function(x, xlim = NULL, ylim = NULL, sample = NULL, LogFC = 0.5, cols 
 #' @return A ggplot object representing the error bar plot.
 #' @examples
 #' # Example usage
-#' p <- plotErrorBar(data, x = group, y = value, cols = c("red", "blue"))
+#' p <- plotErrorBar(data, x = "group", y = "value", cols = c("red", "blue"))
 #' print(p)
-plotErrorBar <- function(data,x=x,y=y, cols = NULL){
-  data_summary <- data %>% group_by(x) %>% summarise(Median = median(y), err = sd(y)/((n()+1)^0.5))
-  p <- ggplot(data_summary, aes(x=x, y=Median, color = x)) + 
-    geom_point(size = 2)+
-    geom_errorbar(aes(ymin=Median-err, ymax=Median+err), width=.2,
-                  position=position_dodge(0.05))+
-    geom_hline(yintercept = 0)+
-    theme_classic(base_size = 8)+
-    theme(legend.position = "none")+
-    scale_color_manual(values = cols)
+plotErrorBar <- function(data, x, y, cols = NULL) {
+  # 使用 !! 和 sym 动态指定列名
+  x <- sym(x)
+  y <- sym(y)
+  
+  # 计算数据摘要
+  data_summary <- data %>%
+    group_by(!!x) %>%
+    summarise(
+      Median = median(!!y, na.rm = TRUE),
+      err = sd(!!y, na.rm = TRUE) / ((n() + 1)^0.5)
+    )
+  
+  # 创建 ggplot 对象
+  p <- ggplot(data_summary, aes(x = !!x, y = Median, color = !!x)) + 
+    geom_point(size = 2) +
+    geom_errorbar(aes(ymin = Median - err, ymax = Median + err), width = 0.2, position = position_dodge(0.05)) +
+    #geom_hline(yintercept = 0) +
+    theme_classic(base_size = 8) +
+    theme(legend.position = "none")
+  
+  # 如果提供了颜色，则添加颜色映射
+  if (!is.null(cols)) {
+    p <- p + scale_color_manual(values = cols)
+  }
+  
   return(p)
 }
+
 
 # 5. bed处理----------------------------------------------------------------
 
@@ -251,13 +269,28 @@ plotErrorBar <- function(data,x=x,y=y, cols = NULL){
 #' @examples
 #' # Example usage
 #' gr <- CovertToGR(data, ID = "Geneid")
-CovertToGR <- function(data, ID = "Geneid"){
-  data_df <- str_split(data$ID,"_",simplify = T) %>% as_tibble()
-  colnames(data_df) <- c("seqnames","start","end")
-  data_gr <- data_df %>% mutate(start = as.integer(start), end = as.integer(end)) %>% 
-    bind_cols(data) %>% plyranges::as_granges()
+CovertToGR <- function(data, ID = "Geneid") {
+  # 动态引用 ID 列
+  id_col <- sym(ID)
+  
+  # 分割 ID 列并转换为数据框
+  data_df <- data %>%
+    pull(!!id_col) %>% # 提取指定列
+    str_split("_", simplify = TRUE) %>%
+    as_tibble()
+  
+  # 添加列名
+  colnames(data_df) <- c("seqnames", "start", "end")
+  
+  # 转换为 GRanges 对象
+  data_gr <- data_df %>%
+    mutate(start = as.integer(start), end = as.integer(end)) %>%
+    bind_cols(data) %>%
+    plyranges::as_granges()
+  
   return(data_gr)
 }
+
 
 # **5.2 FindOverlaps_gr --------------------------------------------------------------------
 
